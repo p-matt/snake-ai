@@ -1,0 +1,9 @@
+
+*.xml
+*.iml
+*.pyc
+save/
+*.h5
+*.log
+*.pickle
+asset/models/50/loss.txt

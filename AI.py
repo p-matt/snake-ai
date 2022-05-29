@@ -2,57 +2,47 @@ import numpy as np
 from random import randint
 from snake import SnakeManager
 from tqdm import tqdm
+from astar import pathfinding
 
-testGames, trainingGames, stepsPerGame = 0, 0, 0
+testGames, trainingGames, steps_max_per_game = 0, 0, 0
 
 best_score_train, total_score_train, total_step_train = 0, 0, 0
 best_score, total_score, total_step = 0, 0, 0
 
+ohe_local_dir = {-1: [0, 0, 1], 0: [0, 1, 0], 1: [1, 0, 0]}
 
-def set_meta_parameters(test_games, training_games, steps_per_game):
-    global testGames, trainingGames, stepsPerGame
-    testGames, trainingGames, stepsPerGame = test_games, training_games, steps_per_game
-
-
-def get_angle_with_apple(snake_position, apple_position):
-    apple_vector = np.array(apple_position) - np.array(snake_position[-1])
-    snake_vector = np.array(snake_position[-1]) - np.array(snake_position[-2])
-
-    a = snake_vector / np.linalg.norm(snake_vector)
-    # avoid division by zero
-    if apple_position == snake_position[-1]:
-        b = 0
-    else:
-        b = apple_vector / np.linalg.norm(apple_vector)
-
-    return np.arctan2(a[0] * b[1] - a[1] * b[0], a[0] * b[0] + a[1] * b[1]) / np.pi
+distance_const = 876.8
 
 
-def get_directions_vectors(snake_position):
-    current_direction_vector = (np.array(snake_position[-1]) - np.array(snake_position[-2]))
-    left_direction_vector = np.array([current_direction_vector[-1], -current_direction_vector[-2]])
-    right_direction_vector = np.array([-current_direction_vector[-1], current_direction_vector[-2]])
-    return [current_direction_vector, left_direction_vector, right_direction_vector]
+def set_parameters(test_games, training_games, steps_per_game):
+    global testGames, trainingGames, steps_max_per_game
+    testGames, trainingGames, steps_max_per_game = test_games, training_games, steps_per_game
 
 
 def get_observation(snake):
-    directions_vectors = get_directions_vectors(snake.snakePositions)
-    blocked_way = snake.direction_state(directions_vectors)
-    angle = get_angle_with_apple(snake.snakePositions, snake.target)
-    return np.array([blocked_way[0], blocked_way[1], blocked_way[2], angle])
+    directions_state = snake.direction_state(snake.get_directions_vectors())
+    angle = snake.get_angle_with_apple()
+    path = pathfinding(snake.get_matrix_field(), snake.current_pos(), snake.target_pos())
+    if path and SnakeManager.Render:
+        snake.draw_path(path)
+    path_count = len(path) if path else -1
+
+    return np.array([path_count, angle] + directions_state)
 
 
-def local_to_global(snakePos, local_dir):
+def local_to_global(snake, local_dir):
     # local: -1> left; 0>straight; 1>right
     # global: 0>left; 1>right; 2>down; 3>up
 
-    directions_vectors = get_directions_vectors(snakePos)
-    current_direction_vector = directions_vectors[0]
-    new_direction = current_direction_vector
-    if local_dir == -1:
-        new_direction = directions_vectors[1]
+    directions_vectors = snake.get_directions_vectors()
+    if local_dir == 0:
+        new_direction = snake.current_dir_vect
+    elif local_dir == -1:
+        new_direction = directions_vectors[0]
     elif local_dir == 1:
-        new_direction = directions_vectors[2]
+        new_direction = directions_vectors[1]
+    else:
+        print("error here")
 
     new_direction = new_direction / 20
     if [-1, 0] == new_direction.tolist():
@@ -66,90 +56,113 @@ def local_to_global(snakePos, local_dir):
     return global_dir
 
 
-def get_random_directions(snakePos):
+def get_random_directions(snake):
     local_dir = randint(-1, 1)
-    global_dir = local_to_global(snakePos, local_dir)
+    global_dir = local_to_global(snake, local_dir)
     return local_dir, global_dir
 
 
-def generate_dataset(display, clock):
+def play(snake, model, obs):
+    if model:
+        predictions = []
+        for local_dir_candidates in range(-1, 2):
+            ld_ohe = ohe_local_dir[local_dir_candidates]
+            X = np.hstack((ld_ohe, obs))
+            predictions.append(model.predict(X.reshape(1, -1)))
+
+        local_dir = np.argmax(np.array(predictions)) - 1
+        global_dir = local_to_global(snake, local_dir)
+    else:
+        local_dir, global_dir = get_random_directions(snake)
+    snake.play(global_dir)
+
+    return local_dir
+
+
+def generate_dataset(display, clock, model=None):
     global best_score_train, total_score_train, total_step_train
-    training_input = []
+    X = []
+    y = []
 
     for _ in tqdm(range(trainingGames)):
-        snake = SnakeManager()
-        prev_score = snake.score
-        prev_observations = get_observation(snake)
-        prev_food_distance = snake.get_food_distance()
+        snake = SnakeManager(display, clock)
+        index_dead = 0
+        for current_step in range(steps_max_per_game):
+            # get obs
+            observations = get_observation(snake)
+            snake_score = snake.score
+            food_distance = snake.get_food_distance()
 
-        for current_step in range(stepsPerGame):
-            local_dir, global_dir = get_random_directions(snake.snakePositions)
-            snake.play(display, clock, global_dir)
-            half_input = np.hstack((local_dir, prev_observations))
+            # play
+            local_dir = play(snake, model, observations)
 
             # -1 when snake is dead
             if snake.is_dead():
-                final_input = np.hstack((half_input, -1))
-                training_input.append(final_input)
+                X.append(np.hstack((ohe_local_dir[local_dir], observations)))
+                y.append(-1)
                 break
             else:
-                food_distance = snake.get_food_distance()
-                reward = (620 - food_distance) / 620
+                X.append(np.hstack((ohe_local_dir[local_dir], observations)))
 
                 # +[0 to 1] when snake went closer from the food/ate the food depending the distance
-                if snake.score > prev_score or food_distance <= prev_food_distance:
-                    prev_score = snake.score
-                    final_input = np.hstack((half_input, reward))
-                    training_input.append(final_input)
+                if snake.score > snake_score:
+                    y.append(1)
                 else:
-                    # 0 when snake survived but wrong way from the food
-                    final_input = np.hstack((half_input, 0))
-                    training_input.append(final_input)
+                    new_food_distance = snake.get_food_distance()
+                    if new_food_distance < food_distance:
+                        reward = (distance_const - snake.get_food_distance()) / distance_const
+                        y.append(reward)
+                    else:
+                        y.append(0)
 
-                prev_observations = get_observation(snake)
-                prev_food_distance = food_distance
-        # region debug
         if snake.score > best_score_train:
             best_score_train = snake.score
         total_step_train += current_step
         total_score_train += snake.score
-        # endregion
-    return np.array(training_input)
-
-
-def think(display, clock, model):
-    global best_score, total_score, total_step
-    for _ in tqdm(range(testGames)):
-        snake = SnakeManager()
-        prev_observations = get_observation(snake)
-
-        for current_step in range(stepsPerGame):
-
-            predictions = []
-            for local_dir in range(-1, 2):
-                final_input = np.hstack((local_dir, prev_observations))
-                predictions.append(model.predict(final_input.reshape(-1, 5, 1)))
-
-            local_dir = np.argmax(np.array(predictions)) - 1
-            global_dir = local_to_global(snake.snakePositions, local_dir)
-            snake.play(display, clock, global_dir)
-
-            if snake.is_dead():
-                break
-            else:
-                prev_observations = get_observation(snake)
-
-        if snake.score > best_score:
-            best_score = snake.score
-
-        # debug
-        total_step += current_step
-        total_score += snake.score
     debug()
-    return
+    return np.array(X), np.array(y)
+
+
+def think(display, clock, model=None):
+    global best_score, total_score, total_step
+    if model is not None:
+        for _ in tqdm(range(testGames)):
+            snake = SnakeManager(display, clock)
+            for current_step in range(steps_max_per_game):
+                observations = get_observation(snake)
+                predictions = []
+                for local_dir_candidates in range(-1, 2):
+                    ld_ohe = ohe_local_dir[local_dir_candidates]
+                    X = np.hstack((ld_ohe, observations)).reshape(1, -1)
+                    predictions.append(model.predict(X))
+                local_dir = np.argmax(np.array(predictions)) - 1
+                global_dir = local_to_global(snake, local_dir)
+                snake.play(global_dir)
+                if snake.is_dead():
+                    # print(predictions)
+                    # input()
+                    break
+
+            if snake.score > best_score:
+                best_score = snake.score
+
+            # debug
+            total_step += current_step
+            total_score += snake.score
+    else:
+        snake = SnakeManager()
+        while not snake.is_dead():
+            path = pathfinding(snake.get_matrix_field(), snake.current_pos(), snake.target_pos())
+            if path and SnakeManager.Render:
+                snake.draw_path(path, display)
+            for dir in directions:
+                snake.play(display, clock, dir)
+
+    # debug()
 
 
 def debug():
+    global best_score_train, total_score_train, total_step_train, best_score, total_score, total_step
     print(f"\nTRAINING")
     print(f"Score: best={best_score_train}, average={total_score_train / trainingGames}")
     print(f"Step: average={total_step_train / trainingGames}")
@@ -157,3 +170,6 @@ def debug():
     print(f"\nRESULT")
     print(f"Score: best={best_score}, average={total_score / testGames}")
     print(f"Step: average={total_step / testGames}")
+
+    best_score_train, total_score_train, total_step_train = 0, 0, 0
+    best_score, total_score, total_step = 0, 0, 0

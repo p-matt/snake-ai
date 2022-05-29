@@ -1,45 +1,41 @@
-# AI plays Snake Game - Neural Network
-## Supervised learning
+# AI plays Snake Game
+## Reinforcement learning
 
 ### Implementation : 
-1. Generate a DataSet from games
-2. Train the Neural Network with the DataSet
-3. Test the model
-&nbsp; 
-## 1. Generate a DataSet  
-First thing is to get a 2D DataSet, where there are 5 **Features** (X):
-- Is left closed (1 — yes, 0 — no)
-- Is front closed (1 — yes, 0 — no)
-- Is right closed (1 — yes, 0 — no)
-- Normalized angle between snake’s direction and direction to the food (from -1 to 1)
-- Suggested local direction (-1 — left, 0 — forward, 1 — right)
+1. Generate a Dataset from games
+2. Train the neural net
+3. Test the model  
+  
 
-The **Label** (Y) of these features is defined arbitrarily depending if the snake is alive or not and if he went closer from the food or not.  
-- If the snake **died** from his last move: **y = -1**  
-- If the snake is still **alive** but **further** from the food: **y = 0**  
-- If the snake is still **alive** and **closer** from the food: **y = [0,1] : (D - food_distance) / D**
-where D is equal to the size of one side of the playing area. This way we can tell if the situation was favorable or not and also how good it was.    
+## 1. Generate a Dataset  
+First thing is to get a 2D DataSet, where there are 12 features:
+- 7 of these features implies distances to the closest wall in 7 directions (from 0 to ~40)
+- Angle between snake’s direction and direction to the food (from -1 to 1)
+- One hot encoded suggested local direction (-1 — left, 0 — forward, 1 — right)
+- Manhattan distance between snake and food
+
+Label of these features is defined arbitrarily depending if the snake is alive or not and if he went closer from the food or not.  
+- Snake **died** from his last move: **y = -1**  
+- Snake is still **alive** but **further** from the food: **y = 0**  
+- Snake is still **alive** and **closer** from the food: **y = [0,1] : (D - food_distance) / D**
+where D is equal to the hypotenuse of the playing area. This way we can tell how good was the situation relatively to the distance between snake and food.    
  
-The generation of the DataSet is effective through **n** trainings games where the snake move randomly and his first size is random between 2 integers.    
-
-The final DataSet looks like :  
-
-X1      | X2     | X3    | X4    | X5    | Y
-| :---: |  :---: | :---: | :---: | :---: | :---: 
-True    | True   | False | 0.1   | 1     | `0.5`
-False   | True   | False | -0.5  | 0     | `-1`
-True    | False  | True  | 0.7   | -1    | `0`
+The generation of the Dataset is effective through n trainings games where the snake move randomly and his first size is random between 2 integers.    
+I also implemented a generation of dataset that involves A* algorithm and doesn't make random move anymore.   
+The final DataSet looks like :
 
 ## 2. Train the Neural Network 
-All the training part is fit using **TFlearn** which is an high API of Tensorflow.  
-From all the training data injected in the neural network, it will be able to **estimate/evaluate the quality of any move** and this is the **output** of the NN.  
-Following this process the snake will not move randomly anymore, he simply takes the way that has the maximum output value from the NN.  
-&nbsp;
+I'm using keras to implement the NN.  
+NN architecture:
+- 3 hidden layer (64 > 32 > 16)  
+- Dropout and batch normalization is used after the non-linearity (ReLU here)  
+
+From all the training data injected in the neural network, it will be able to evaluate the quality of a given situation and this is the output of the NN.  
+Following this process the snake will not move randomly anymore, he simply takes the way that has the maximum output value from the NN which correspond to the best situation.  
+
+
 ## 3. Testing
-For the same DataSet structure, the **final veracity** of the AI is **very dependent of number of exemple** (number of trainings games). With only few examples the system will be very dependent of these specific situations. With more examples there will be better result with longer learning phase while the system is not overfed.  
-The **final veracity** is also very dependent from other factor such as the **learning rate**, **the way the training data is generated** (from random moves? from random size ? ...) , the number of neurons etc.
-There is how the varacity of the AI varies:  
-  
+For the same Dataset structure, minimizing the loss function (MSE) is very dependents to the quantity and the quality of data. With only few examples the system will be very dependent of these specific situations.
   
 <img width="80%" src="https://user-images.githubusercontent.com/74459226/103469589-0b362480-4d67-11eb-9c87-afaf4c0b61cc.png"/>
 
