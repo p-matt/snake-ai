@@ -1,5 +1,4 @@
 # AI plays Snake Game
-## Reinforcement learning
 
 ### Implementation : 
 1. Generate a Dataset from games
